@@ -7,6 +7,6 @@
         "linux/arm64"
     ],
     "afterBundleInitramfsRecipes": [
-        "build-base.xsh"
+        "build.xsh"
     ]
 }
