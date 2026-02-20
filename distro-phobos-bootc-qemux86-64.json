@@ -1,0 +1,30 @@
+{
+    "name": "PhobOS-bootc",
+    "machine": "qemux86-64",
+    "arch": "linux/amd64",
+    "version": {
+        "major": 0,
+        "minor": 0,
+        "patch": 0,
+        "build": 15,
+        "variant": "bootc",
+        "codename": "lion-killer"
+    },
+    "useInitramfs": true,
+    "maxImgSize": 4724,
+    "searchForRecipesOn": [
+        "../gaia/cookbook",
+        "../cookbook-phobos/cookbook",
+        "cookbook"
+    ],
+    "excludeRecipes": [
+        "u-boot-ram",
+        "microsoft",
+        "powershell",
+        "neofetch",
+        "initramfs-php",
+        "simple-splash",
+        "easy-splash",
+        "syna-tools"
+    ]
+}

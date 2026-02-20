@@ -1,0 +1,12 @@
+{
+    "name": "bootc-base",
+    "type": "config",
+    "priority": 0,
+    "support": [
+        "linux/amd64",
+        "linux/arm64"
+    ],
+    "afterBundleInitramfsRecipes": [
+        "build-base.xsh"
+    ]
+}

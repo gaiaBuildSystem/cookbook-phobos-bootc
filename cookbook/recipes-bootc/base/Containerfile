@@ -1,0 +1,22 @@
+FROM docker.io/library/debian:bookworm
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+# basic deps
+RUN \
+    apt update -y && \
+    apt install -y \
+    bubblewrap \
+    btrfs-progs \
+    dosfstools \
+    e2fsprogs \
+    fdisk \
+    podman \
+    skopeo \
+    systemd \
+    systemd-boot* \
+    xfsprogs && \
+    apt clean -y
+
+
