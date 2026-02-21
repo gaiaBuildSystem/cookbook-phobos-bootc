@@ -63,14 +63,32 @@ cp -r @(f"{_DEPLOY_PATH}/initramfs.cpio.gz") @(f"{_IMAGE_CONTEXT}/")
 # we need to also copy the modules
 cp -r @(f"{_IMAGE_MNT_ROOT}/lib/modules") @(f"{_IMAGE_CONTEXT}/")
 
+# copy the Containerfile to the build context
+cp -r @(f"{_path}/Containerfile") @(f"{_IMAGE_CONTEXT}/")
+
+# just move the initramfs to the /usr/lib/modules/ like ostree would like
+_kernel_versions = os.listdir(f"{_IMAGE_MNT_ROOT}/usr/lib/modules")
+
+# Assume there is only one directory
+if len(_kernel_versions) != 1:
+    raise Exception(
+        "Expected exactly one kernel version directory in /usr/lib/modules"
+    )
+
+cp -a @(f"{_IMAGE_MNT_BOOT}/initramfs.cpio.gz") \
+@(f"{_IMAGE_CONTEXT}/lib/modules/{_kernel_versions[0]}/initramfs.img")
+
 # build the image
-# sudo \
-#     podman \
-#     build \
-#     --cap-add=SYS_ADMIN \
-#     --security-opt=seccomp=unconfined \
-#     -f @(f"{_path}/Containerfile") \
-#     -t "${image_name}:latest" .
+cd @(f"{_IMAGE_CONTEXT}")
+
+podman \
+    build \
+    --cap-add=SYS_ADMIN \
+    --security-opt=seccomp=unconfined \
+    -f ./Containerfile \
+    -t bootc-base:latest .
+
+cd -
 
 print(
     "building bootc base image, ok",
