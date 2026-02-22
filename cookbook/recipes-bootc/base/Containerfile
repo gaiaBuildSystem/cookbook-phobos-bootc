@@ -194,6 +194,25 @@ RUN \
     --mount=type=bind,from=builder,src=/build/bootc-dist,dst=/mnt/bootc-dist \
     cp -a /mnt/bootc-dist/. /
 
+RUN apt update -y && \
+    apt install -y \
+        neofetch \
+        xterm \
+    && \
+    apt clean -y
+
+# PhobOS customization
+COPY files/systemd/bootc-booted.service /etc/systemd/system/bootc-booted.service
+COPY files/systemd/bootc-u-boot.service /etc/systemd/system/bootc-u-boot.service
+COPY files/systemd/ostree-finalize-staged.service /etc/systemd/system/ostree-finalize-staged.service
+COPY files/systemd/ostree-finalize-staged-hold.service /etc/systemd/system/ostree-finalize-staged-hold.service
+
+RUN systemctl enable \
+    bootc-booted.service \
+    bootc-u-boot.service \
+    ostree-finalize-staged.service \
+    ostree-finalize-staged-hold.service
+
 # Necessary for general behavior expected by image-based systems
 RUN \
     sed -i 's|^HOME=.*|HOME=/var/home|' "/etc/default/useradd" && \
@@ -208,12 +227,6 @@ RUN \
     echo "$(for dir in opt home srv mnt usrlocal ; do echo "d /var/$dir 0755 root root -" ; done)" | tee -a "/usr/lib/tmpfiles.d/bootc-base-dirs.conf" && \
     printf "d /var/roothome 0700 root root -\nd /run/media 0755 root root -" | tee -a "/usr/lib/tmpfiles.d/bootc-base-dirs.conf" && \
     printf '[sysroot]\nreadonly = true\n' | tee "/usr/lib/ostree/prepare-root.conf"
-
-# PhobOS customization
-COPY files/systemd/bootc-booted.service /etc/systemd/system/bootc-booted.service
-COPY files/systemd/bootc-u-boot.service /etc/systemd/system/bootc-u-boot.service
-
-RUN systemctl enable bootc-booted.service
 
 # this is bootc recommendation
 # to label the image as a bootable container
