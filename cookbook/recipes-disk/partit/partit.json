@@ -19,8 +19,7 @@
         "lz4"
     ],
     "buildRecipes": [
-        "disk.ts",
-        "buildRootfs.ts"
+        "disk.ts"
     ],
     "cleanRecipes": [
         "umount.ts"
