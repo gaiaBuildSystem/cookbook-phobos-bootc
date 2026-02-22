@@ -1,0 +1,28 @@
+{
+    "name": "debian-bookworm",
+    "type": "rootfs",
+    "priority": 0,
+    "support": [
+        "linux/amd64",
+        "linux/arm64"
+    ],
+    "env": {
+        "BOOT_LABEL": "BOOT",
+        "ROOT_LABEL": "otaroot"
+    },
+    "hostDeps": [
+        "mount",
+        "xz-utils",
+        "kpartx",
+        "e2fsprogs",
+        "pipx",
+        "lz4"
+    ],
+    "buildRecipes": [
+        "disk.ts",
+        "buildRootfs.ts"
+    ],
+    "cleanRecipes": [
+        "umount.ts"
+    ]
+}
