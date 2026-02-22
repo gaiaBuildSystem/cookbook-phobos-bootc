@@ -34,6 +34,8 @@ _BUILD_PATH = os.environ.get('BUILD_PATH')
 _DISTRO_MAJOR = os.environ.get('DISTRO_MAJOR')
 _DISTRO_MINOR = os.environ.get('DISTRO_MINOR')
 _DISTRO_PATCH = os.environ.get('DISTRO_PATCH')
+_DISTRO_BUILD = os.environ.get('DISTRO_BUILD')
+_CONTAINER_REGISTRY_NS = os.environ.get('CONTAINER_REGISTRY_NS')
 _USER_PASSWD = os.environ.get('USER_PASSWD')
 
 # read the meta data
@@ -155,6 +157,27 @@ sudo ln -s loader/uEnv.txt @(f"{_IMAGE_MNT_ROOT}/boot/uEnv.txt")
 
 print(
     "installing phobos bootc base image to filesystem, ok",
+    color=Color.WHITE,
+    bg_color=BgColor.GREEN
+)
+
+print(
+    "pushing to docker.io ...",
+    color=Color.WHITE,
+    bg_color=BgColor.BLUE
+)
+
+sudo podman \
+    tag \
+    phobos-bootc-base:latest \
+    @(f"docker.io/{_CONTAINER_REGISTRY_NS}/phobos-bootc-{_MACHINE}:{_DISTRO_MAJOR}.{_DISTRO_MINOR}.{_DISTRO_PATCH}.{_DISTRO_BUILD}")
+
+sudo podman \
+    push \
+    @(f"docker.io/{_CONTAINER_REGISTRY_NS}/phobos-bootc-{_MACHINE}:{_DISTRO_MAJOR}.{_DISTRO_MINOR}.{_DISTRO_PATCH}.{_DISTRO_BUILD}")
+
+print(
+    "pushing phobos bootc base image to docker.io, ok",
     color=Color.WHITE,
     bg_color=BgColor.GREEN
 )
