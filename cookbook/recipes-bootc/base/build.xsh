@@ -66,6 +66,9 @@ cp -r @(f"{_IMAGE_MNT_ROOT}/lib/modules") @(f"{_IMAGE_CONTEXT}/")
 # copy the Containerfile to the build context
 cp -r @(f"{_path}/Containerfile") @(f"{_IMAGE_CONTEXT}/")
 
+# copy also the assets
+cp -r @(f"{_path}/files") @(f"{_IMAGE_CONTEXT}/")
+
 # just move the initramfs to the /usr/lib/modules/ like ostree would like
 _kernel_versions = os.listdir(f"{_IMAGE_MNT_ROOT}/usr/lib/modules")
 
@@ -141,6 +144,11 @@ sudo podman \
         --skip-bootloader \
         --u-boot \
         @(f"{_IMAGE_MNT_ROOT}")
+
+# fixups
+
+# 1. the /boot/uEnv.txt symlink
+sudo ln -s loader/uEnv.txt @(f"{_IMAGE_MNT_ROOT}/uEnv.txt")
 
 print(
     "installing phobos bootc base image to filesystem, ok",

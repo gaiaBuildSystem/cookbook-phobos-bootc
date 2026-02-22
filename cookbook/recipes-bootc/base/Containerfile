@@ -209,6 +209,12 @@ RUN \
     printf "d /var/roothome 0700 root root -\nd /run/media 0755 root root -" | tee -a "/usr/lib/tmpfiles.d/bootc-base-dirs.conf" && \
     printf '[sysroot]\nreadonly = true\n' | tee "/usr/lib/ostree/prepare-root.conf"
 
+# PhobOS customization
+COPY files/systemd/bootc-booted.service /etc/systemd/system/bootc-booted.service
+COPY files/systemd/bootc-u-boot.service /etc/systemd/system/bootc-u-boot.service
+
+RUN systemctl enable bootc-booted.service
+
 # this is bootc recommendation
 # to label the image as a bootable container
 LABEL containers.bootc=1
