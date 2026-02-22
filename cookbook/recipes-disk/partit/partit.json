@@ -1,5 +1,5 @@
 {
-    "name": "debian-bookworm",
+    "name": "partit",
     "type": "rootfs",
     "priority": 0,
     "support": [
