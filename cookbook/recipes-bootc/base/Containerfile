@@ -1,20 +1,25 @@
 # ── builder stage ────────────────────────────────────────────────────────────
-# Compiles every project on tmpfs; the built source trees are preserved at
-# well-known paths so the final stage can mount them and run each project's
-# own install step directly against the live image filesystem.
+# Each major step is its own RUN layer so Docker/Podman can cache them
+# independently. Cache mounts keep apt, cargo and Go module downloads across
+# rebuilds without bloating the final layers.
 FROM docker.io/library/debian:bookworm AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
-ENV CARGO_HOME=/var/cache/rust
-ENV RUSTUP_HOME=/var/cache/rust
+# Keep rust toolchain inside the image layer so subsequent RUN steps find it.
+# Only the downloaded registry/crates are kept in a cache mount.
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV PATH="/usr/local/cargo/bin:/usr/local/rustup/bin:/usr/local/go/bin:${PATH}"
 ARG OSTREE_VERSION=v2025.3
 ARG GO_VERSION=1.24.6
 
+# ── system dependencies ───────────────────────────────────────────────────────
+# Cache mount keeps the downloaded .deb files across rebuilds; the layer is
+# only invalidated when the package list below changes.
 RUN \
-    --mount=type=tmpfs,dst=/tmp \
-    --mount=type=tmpfs,dst=/root \
-    --mount=type=tmpfs,dst=/boot \
+    --mount=type=cache,dst=/var/cache/apt,sharing=locked \
+    --mount=type=cache,dst=/var/lib/apt,sharing=locked \
     apt update -y && \
     apt install -y \
         git \
@@ -43,31 +48,43 @@ RUN \
         dracut \
         pkg-config \
         libext2fs-dev \
-        libssl-dev && \
-    # ── ostree ────────────────────────────────────────────────────────────────
-    # build and install into the builder so pkg-config / ldconfig find it when
-    # compiling later projects; the source tree is kept so the final stage can
-    # re-run 'make install' directly.
-    git clone --depth 1 --branch "${OSTREE_VERSION}" "https://github.com/ostreedev/ostree.git" /build/ostree && \
+        libssl-dev
+
+# ── ostree ────────────────────────────────────────────────────────────────────
+# Layer is invalidated only when OSTREE_VERSION changes.
+RUN \
+    git clone --depth 1 --branch "${OSTREE_VERSION}" \
+        "https://github.com/ostreedev/ostree.git" /build/ostree && \
     cd /build/ostree && \
     ./autogen.sh --prefix=/usr --sysconfdir=/etc --disable-gtk-doc --disable-man && \
     make -j"$(nproc)" && \
     make install && \
     make install DESTDIR=/build/ostree-dist && \
     pkg-config --exists 'ostree-1 >= 2025.3' && \
-    ldconfig && \
-    # ── rust (kept in /var/cache/rust so it survives outside /tmp) ────────────
+    ldconfig
+
+# ── rust toolchain ────────────────────────────────────────────────────────────
+# Toolchain binaries land in CARGO_HOME/RUSTUP_HOME (both in /usr/local, inside
+# the layer) so later RUN steps can use them without re-installing.
+RUN \
     curl \
         --proto '=https' \
         --tlsv1.2 \
         -sSf "https://sh.rustup.rs" | sh -s -- --profile minimal -y && \
-    # ── bootupctl stub ────────────────────────────────────────────────────────
-    # a tiny static binary that exits 0 so bootc's supports_bootupd() check
-    # passes; at PhobOS level we use u-boot, not bootupd.
+    rustup --version && cargo --version
+
+# ── bootupctl stub ────────────────────────────────────────────────────────────
+# A tiny static binary that exits 0 so bootc's supports_bootupd() check
+# passes; at PhobOS level we use u-boot, not bootupd.
+RUN \
     mkdir -p /build/bootupd/updates && \
     printf 'int main(void){return 0;}\n' > /tmp/bootupctl.c && \
-    gcc -static -Os -s /tmp/bootupctl.c -o /build/bootupd/bootupctl && \
-    # ── Go toolchain (only needed to compile skopeo) ──────────────────────────
+    gcc -static -Os -s /tmp/bootupctl.c -o /build/bootupd/bootupctl
+
+# ── Go toolchain ──────────────────────────────────────────────────────────────
+# Installed to /usr/local/go; stays in the image layer so the skopeo step below
+# can use it without downloading again.
+RUN \
     GO_ARCH="$(dpkg --print-architecture)" && \
     case "${GO_ARCH}" in \
         amd64) GO_TARBALL_ARCH='amd64' ;; \
@@ -76,14 +93,27 @@ RUN \
     esac && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_TARBALL_ARCH}.tar.gz" -o /tmp/go.tgz && \
     tar -C /usr/local -xzf /tmp/go.tgz && \
-    export PATH="/usr/local/go/bin:${PATH}" && \
-    go version && \
-    # ── skopeo ────────────────────────────────────────────────────────────────
+    go version
+
+# ── skopeo ────────────────────────────────────────────────────────────────────
+# Go module cache is preserved across rebuilds; layer invalidated only if the
+# skopeo repo HEAD changes.
+RUN \
+    --mount=type=cache,dst=/root/go/pkg/mod,sharing=locked \
     git clone --depth 1 "https://github.com/containers/skopeo.git" /build/skopeo && \
-    make -C /build/skopeo bin/skopeo && \
-    # ── bootc ─────────────────────────────────────────────────────────────────
+    make -C /build/skopeo bin/skopeo GOFLAGS=-mod=mod
+
+# ── bootc ─────────────────────────────────────────────────────────────────────
+# Cargo registry cache drastically cuts down compile time on rebuilds.
+# The actual built binaries land in /build/bootc-dist which is a real layer.
+RUN \
+    --mount=type=cache,dst=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,dst=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,dst=/build/bootc-target-cache,sharing=locked \
     git clone "https://github.com/gaiaBuildSystem/bootc.git" /build/bootc && \
-    sh -c ". ${RUSTUP_HOME}/env ; make -C /build/bootc bin && make -C /build/bootc install-all DESTDIR=/build/bootc-dist"
+    ln -s /build/bootc-target-cache /build/bootc/target && \
+    make -C /build/bootc bin && \
+    make -C /build/bootc install-all DESTDIR=/build/bootc-dist
 
 # ── final stage ──────────────────────────────────────────────────────────────
 FROM docker.io/library/debian:bookworm
@@ -134,7 +164,8 @@ RUN \
 COPY modules /usr/lib/modules
 
 # set the root passwordless
-RUN echo "root ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN echo "root ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    passwd -d root
 
 # install compiled artifacts from the builder stage.
 # Each project is bind-mounted temporarily (never stored as a layer) and its
@@ -178,7 +209,7 @@ RUN \
     printf "d /var/roothome 0700 root root -\nd /run/media 0755 root root -" | tee -a "/usr/lib/tmpfiles.d/bootc-base-dirs.conf" && \
     printf '[sysroot]\nreadonly = true\n' | tee "/usr/lib/ostree/prepare-root.conf"
 
-# this is bootc reccomendation
+# this is bootc recommendation
 # to label the image as a bootable container
 LABEL containers.bootc=1
 
