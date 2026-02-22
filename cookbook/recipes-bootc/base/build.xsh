@@ -21,7 +21,7 @@ from torizon_templates_utils.errors import Error_Out,Error
 
 
 print(
-    "building bootc base image ...",
+    "building phobos bootc base image ...",
     color=Color.WHITE,
     bg_color=BgColor.GREEN
 )
@@ -76,22 +76,74 @@ if len(_kernel_versions) != 1:
     )
 
 cp -a @(f"{_IMAGE_MNT_BOOT}/initramfs.cpio.gz") \
-@(f"{_IMAGE_CONTEXT}/lib/modules/{_kernel_versions[0]}/initramfs.img")
+@(f"{_IMAGE_CONTEXT}/modules/{_kernel_versions[0]}/initramfs.img")
 
 # build the image
 cd @(f"{_IMAGE_CONTEXT}")
 
-podman \
+print(
+    "fixups done, starting to build the phobos bootc base image ...",
+    color=Color.WHITE,
+    bg_color=BgColor.BLUE
+)
+
+sudo podman \
     build \
     --cap-add=SYS_ADMIN \
     --security-opt=seccomp=unconfined \
     -f ./Containerfile \
-    -t bootc-base:latest .
+    -t localhost/phobos-bootc-base:latest .
+
+_DIGEST=$(sudo podman inspect phobos-bootc-base:latest --format '{{index .Digest}}')
 
 cd -
 
 print(
-    "building bootc base image, ok",
+    "building phobos bootc base image, ok",
+    color=Color.WHITE,
+    bg_color=BgColor.GREEN
+)
+
+print(
+    "installing to disk the phobos bootc base image ...",
+    color=Color.WHITE,
+    bg_color=BgColor.BLUE
+)
+
+# clean the rootfs first (must be truly empty for bootc install),
+# but keep the mountpoint directory itself
+sudo umount @(f"{_IMAGE_MNT_ROOT}/dev/pts")
+sudo umount @(f"{_IMAGE_MNT_ROOT}/dev")
+sudo umount @(f"{_IMAGE_MNT_ROOT}/proc")
+sudo umount @(f"{_IMAGE_MNT_ROOT}/sys")
+
+sudo bash -c @(f"find {_IMAGE_MNT_ROOT} -mindepth 1 -maxdepth 1 -exec sudo rm -rf {{}} +")
+
+# install the container now
+sudo podman \
+    run \
+    --rm \
+    --privileged \
+    --pid=host \
+    -it \
+    -v /etc/containers:/etc/containers:Z \
+    -v /var/lib/containers:/var/lib/containers:Z \
+    -v /var/tmp:/var/tmp:Z \
+    -v /dev:/dev \
+    -v @(f"{_IMAGE_MNT_ROOT}:{_IMAGE_MNT_ROOT}") \
+    -e RUST_LOG=debug \
+    -v @(f"{_DEPLOY_PATH}:/data") \
+    --security-opt label=type:unconfined_t \
+    phobos-bootc-base:latest \
+        bootc \
+        install \
+        to-filesystem \
+        --skip-bootloader \
+        --u-boot \
+        @(f"{_IMAGE_MNT_ROOT}")
+
+print(
+    "installing phobos bootc base image to filesystem, ok",
     color=Color.WHITE,
     bg_color=BgColor.GREEN
 )

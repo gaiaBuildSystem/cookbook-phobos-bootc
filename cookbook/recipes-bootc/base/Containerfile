@@ -1,3 +1,91 @@
+# ── builder stage ────────────────────────────────────────────────────────────
+# Compiles every project on tmpfs; the built source trees are preserved at
+# well-known paths so the final stage can mount them and run each project's
+# own install step directly against the live image filesystem.
+FROM docker.io/library/debian:bookworm AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV CARGO_HOME=/var/cache/rust
+ENV RUSTUP_HOME=/var/cache/rust
+ARG OSTREE_VERSION=v2025.3
+ARG GO_VERSION=1.24.6
+
+RUN \
+    --mount=type=tmpfs,dst=/tmp \
+    --mount=type=tmpfs,dst=/root \
+    --mount=type=tmpfs,dst=/boot \
+    apt update -y && \
+    apt install -y \
+        git \
+        curl \
+        make \
+        build-essential \
+        autoconf \
+        automake \
+        libtool \
+        gettext \
+        gperf \
+        bison \
+        flex \
+        go-md2man \
+        libarchive-dev \
+        libglib2.0-dev \
+        libassuan-dev \
+        libdevmapper-dev \
+        libgpgme-dev \
+        liblzma-dev \
+        libcap-dev \
+        libfuse3-dev \
+        libcurl4-gnutls-dev \
+        libzstd-dev \
+        pkgconf \
+        dracut \
+        pkg-config \
+        libext2fs-dev \
+        libssl-dev && \
+    # ── ostree ────────────────────────────────────────────────────────────────
+    # build and install into the builder so pkg-config / ldconfig find it when
+    # compiling later projects; the source tree is kept so the final stage can
+    # re-run 'make install' directly.
+    git clone --depth 1 --branch "${OSTREE_VERSION}" "https://github.com/ostreedev/ostree.git" /build/ostree && \
+    cd /build/ostree && \
+    ./autogen.sh --prefix=/usr --sysconfdir=/etc --disable-gtk-doc --disable-man && \
+    make -j"$(nproc)" && \
+    make install && \
+    make install DESTDIR=/build/ostree-dist && \
+    pkg-config --exists 'ostree-1 >= 2025.3' && \
+    ldconfig && \
+    # ── rust (kept in /var/cache/rust so it survives outside /tmp) ────────────
+    curl \
+        --proto '=https' \
+        --tlsv1.2 \
+        -sSf "https://sh.rustup.rs" | sh -s -- --profile minimal -y && \
+    # ── bootupctl stub ────────────────────────────────────────────────────────
+    # a tiny static binary that exits 0 so bootc's supports_bootupd() check
+    # passes; at PhobOS level we use u-boot, not bootupd.
+    mkdir -p /build/bootupd/updates && \
+    printf 'int main(void){return 0;}\n' > /tmp/bootupctl.c && \
+    gcc -static -Os -s /tmp/bootupctl.c -o /build/bootupd/bootupctl && \
+    # ── Go toolchain (only needed to compile skopeo) ──────────────────────────
+    GO_ARCH="$(dpkg --print-architecture)" && \
+    case "${GO_ARCH}" in \
+        amd64) GO_TARBALL_ARCH='amd64' ;; \
+        arm64) GO_TARBALL_ARCH='arm64' ;; \
+        *) echo "unsupported architecture for Go: ${GO_ARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_TARBALL_ARCH}.tar.gz" -o /tmp/go.tgz && \
+    tar -C /usr/local -xzf /tmp/go.tgz && \
+    export PATH="/usr/local/go/bin:${PATH}" && \
+    go version && \
+    # ── skopeo ────────────────────────────────────────────────────────────────
+    git clone --depth 1 "https://github.com/containers/skopeo.git" /build/skopeo && \
+    make -C /build/skopeo bin/skopeo && \
+    # ── bootc ─────────────────────────────────────────────────────────────────
+    git clone "https://github.com/gaiaBuildSystem/bootc.git" /build/bootc && \
+    sh -c ". ${RUSTUP_HOME}/env ; make -C /build/bootc bin && make -C /build/bootc install-all DESTDIR=/build/bootc-dist"
+
+# ── final stage ──────────────────────────────────────────────────────────────
 FROM docker.io/library/debian:bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -13,7 +101,7 @@ RUN \
         e2fsprogs \
         fdisk \
         podman \
-        skopeo \
+        libarchive13 \
         systemd \
         systemd-timesyncd \
         systemd-boot* \
@@ -31,12 +119,14 @@ RUN \
         network-manager \
         polkitd \
         net-tools \
-        resolvconf \
+        runc \
         xfsprogs && \
     apt clean -y
 
 # enable what is needed for systemd to work properly in the container
 RUN \
+    mkdir -p /sbin && \
+    ln -sf /usr/lib/systemd/systemd /sbin/init && \
     stat /sbin/init && \
     systemctl enable systemd-timesyncd
 
@@ -46,58 +136,37 @@ COPY modules /usr/lib/modules
 # set the root passwordless
 RUN echo "root ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# install the bootc and stuff
-ENV CARGO_HOME=/tmp/rust
-ENV RUSTUP_HOME=/tmp/rust
+# install compiled artifacts from the builder stage.
+# Each project is bind-mounted temporarily (never stored as a layer) and its
+# own install command runs directly against the live image filesystem.
 
+# ostree
 RUN \
-    --mount=type=tmpfs,dst=/tmp \
-    --mount=type=tmpfs,dst=/root \
-    --mount=type=tmpfs,dst=/boot \
-    apt update -y && \
-    apt install -y \
-        git \
-        curl \
-        make \
-        build-essential \
-        go-md2man \
-        libzstd-dev \
-        pkgconf \
-        dracut \
-        libostree-dev \
-        ostree && \
-    # install rust
-    curl \
-        --proto '=https' \
-        --tlsv1.2 \
-        -sSf "https://sh.rustup.rs" | sh -s -- --profile minimal -y && \
-    # stub bootupctl: compile a tiny static binary that exits 0
-    # so bootc's supports_bootupd() check passes and install doesn't
-    # touch bootloader, at PhobOS level we use u-boot
-    mkdir -p /usr/lib/bootupd/updates && \
-    printf 'int main(void){return 0;}\n' > /tmp/bootupctl.c && \
-    gcc -static -Os -s /tmp/bootupctl.c -o /usr/bin/bootupctl && \
-    rm -f /tmp/bootupctl.c && \
-    # build and install bootc
-    git clone "https://github.com/gaiaBuildSystem/bootc.git" /tmp/bootc && \
-    sh -c ". ${RUSTUP_HOME}/env ; make -C /tmp/bootc bin install-all" && \
-    # cleanup
-    apt purge -y \
-        git \
-        curl \
-        make \
-        build-essential \
-        go-md2man \
-        libzstd-dev \
-        pkgconf \
-        libostree-dev && \
-    apt autoremove -y && \
-    apt clean -y
+    --mount=type=bind,from=builder,src=/build/ostree-dist,dst=/mnt/ostree-dist \
+    cp -a /mnt/ostree-dist/. / && \
+    ldconfig
+
+# bootupctl stub + bootupd directory
+RUN \
+    --mount=type=bind,from=builder,src=/build/bootupd,dst=/mnt/bootupd \
+    install -m 0755 /mnt/bootupd/bootupctl /usr/bin/bootupctl && \
+    mkdir -p /usr/lib/bootupd/updates
+
+# skopeo
+RUN \
+    --mount=type=bind,from=builder,src=/build/skopeo,dst=/mnt/skopeo \
+    install -m 0755 /mnt/skopeo/bin/skopeo /usr/bin/skopeo && \
+    /usr/bin/skopeo --version
+
+# bootc
+RUN \
+    --mount=type=bind,from=builder,src=/build/bootc-dist,dst=/mnt/bootc-dist \
+    cp -a /mnt/bootc-dist/. /
 
 # Necessary for general behavior expected by image-based systems
 RUN \
     sed -i 's|^HOME=.*|HOME=/var/home|' "/etc/default/useradd" && \
-    rm -rf /boot /home /root /usr/local /srv /var && \
+    rm -rf /boot /home /root /usr/local /usr/etc /srv /var && \
     mkdir -p /sysroot /boot /usr/lib/ostree /var && \
     ln -s sysroot/ostree /ostree && \
     ln -s var/roothome /root && \
