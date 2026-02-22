@@ -55,7 +55,6 @@
         "recipes-dev",
         "mars",
         "ostree",
-        "bookworm",
         "custom-feed"
     ]
 }
