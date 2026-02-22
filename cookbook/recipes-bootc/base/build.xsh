@@ -147,8 +147,11 @@ sudo podman \
 
 # fixups
 
+# 0. remount writable because bootc install it as read-only
+sudo mount -o remount,rw @(f"{_IMAGE_MNT_ROOT}")
+
 # 1. the /boot/uEnv.txt symlink
-sudo ln -s loader/uEnv.txt @(f"{_IMAGE_MNT_ROOT}/uEnv.txt")
+sudo ln -s loader/uEnv.txt @(f"{_IMAGE_MNT_ROOT}/boot/uEnv.txt")
 
 print(
     "installing phobos bootc base image to filesystem, ok",
