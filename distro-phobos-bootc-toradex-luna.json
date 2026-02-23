@@ -15,6 +15,7 @@
     "searchForRecipesOn": [
         "../gaia/cookbook",
         "../cookbook-synaptics/cookbook",
+        "../cookbook-phobos/cookbook",
         "cookbook"
     ],
     "excludeRecipes": [
