@@ -80,7 +80,13 @@ if len(_kernel_versions) != 1:
         "Expected exactly one kernel version directory in /usr/lib/modules"
     )
 
-cp -a @(f"{_IMAGE_MNT_BOOT}/initramfs.cpio.gz") \
+cp -a @(f"{_DEPLOY_PATH}/vmlinux") \
+@(f"{_IMAGE_CONTEXT}/modules/{_kernel_versions[0]}/vmlinux")
+
+cp -a @(f"{_DEPLOY_PATH}/vmlinux") \
+@(f"{_IMAGE_CONTEXT}/modules/{_kernel_versions[0]}/vmlinuz")
+
+cp -a @(f"{_DEPLOY_PATH}/initramfs.cpio.gz") \
 @(f"{_IMAGE_CONTEXT}/modules/{_kernel_versions[0]}/initramfs.img")
 
 # build the image
