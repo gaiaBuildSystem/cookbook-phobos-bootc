@@ -56,5 +56,6 @@
         "mars",
         "ostree",
         "custom-feed"
-    ]
+    ],
+    "$schema": "./schema/distro.json"
 }
