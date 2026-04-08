@@ -55,7 +55,8 @@
         "recipes-dev",
         "mars",
         "ostree",
-        "custom-feed"
+        "custom-feed",
+        "qcom-boot"
     ],
     "$schema": "./schema/distro.json"
 }
