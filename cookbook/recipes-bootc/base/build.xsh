@@ -102,6 +102,7 @@ sudo podman \
     build \
     --cap-add=SYS_ADMIN \
     --security-opt=seccomp=unconfined \
+    --build-arg MACHINE=@(_MACHINE) \
     -f ./Containerfile \
     -t localhost/phobos-bootc-base:latest .
 

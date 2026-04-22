@@ -13,6 +13,9 @@ ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH="/usr/local/cargo/bin:/usr/local/rustup/bin:/usr/local/go/bin:${PATH}"
 ARG OSTREE_VERSION=v2025.3
 ARG GO_VERSION=1.24.6
+ARG UPTANE_SIGN_VERSION=3.2.10
+ARG UPTANE_SIGN_SHA256=97c562c01bdbe40f2336a485bc523489f61a4867d3d982d318ccf233d94640a3
+ARG MACHINE=qemux86-64
 
 # ── system dependencies ───────────────────────────────────────────────────────
 # Cache mount keeps the downloaded .deb files across rebuilds; the layer is
@@ -24,6 +27,7 @@ RUN \
     apt install -y \
         git \
         curl \
+        cmake \
         make \
         build-essential \
         autoconf \
@@ -42,13 +46,26 @@ RUN \
         liblzma-dev \
         libcap-dev \
         libfuse3-dev \
-        libcurl4-gnutls-dev \
         libzstd-dev \
         pkgconf \
         dracut \
         pkg-config \
         libext2fs-dev \
-        libssl-dev
+        rsync \
+        asn1c \
+        libboost-dev \
+        libboost-log-dev \
+        libboost-program-options-dev \
+        libcurl4-openssl-dev \
+        libpthread-stubs0-dev \
+        libsodium-dev \
+        libsqlite3-dev \
+        python3 \
+        python3-requests \
+        libglib2.0-dev \
+        file \
+        libssl-dev \
+        openjdk-17-jre-headless
 
 # ── ostree ────────────────────────────────────────────────────────────────────
 # Layer is invalidated only when OSTREE_VERSION changes.
@@ -56,11 +73,11 @@ RUN \
     git clone --depth 1 --branch "${OSTREE_VERSION}" \
         "https://github.com/ostreedev/ostree.git" /build/ostree && \
     cd /build/ostree && \
-    ./autogen.sh --prefix=/usr --sysconfdir=/etc --disable-gtk-doc --disable-man && \
+    ./autogen.sh --prefix=/usr --sysconfdir=/etc --disable-man && \
     make -j"$(nproc)" && \
     make install && \
     make install DESTDIR=/build/ostree-dist && \
-    pkg-config --exists 'ostree-1 >= 2025.3' && \
+    PKG_CONFIG_PATH=/usr/lib/pkgconfig:${PKG_CONFIG_PATH} pkg-config --print-errors --exists 'ostree-1 >= 2025.3' && \
     ldconfig
 
 # ── rust toolchain ────────────────────────────────────────────────────────────
@@ -115,6 +132,31 @@ RUN \
     make -C /build/bootc bin && \
     make -C /build/bootc install-all DESTDIR=/build/bootc-dist
 
+# ── aktualizr ─────────────────────────────────────────────────────────────────
+RUN \
+    git clone --depth 1 --recurse-submodules --shallow-submodules "https://github.com/gaiaBuildSystem/aktualizr.git" /build/aktualizr && \
+    mkdir -p /build/aktualizr/uptane-sign && \
+    curl -fsSL "https://github.com/uptane/ota-tuf/releases/download/v${UPTANE_SIGN_VERSION}/cli-${UPTANE_SIGN_VERSION}.tgz" -o "/build/aktualizr/uptane-sign/cli-${UPTANE_SIGN_VERSION}.tgz" && \
+    echo "${UPTANE_SIGN_SHA256}  /build/aktualizr/uptane-sign/cli-${UPTANE_SIGN_VERSION}.tgz" | sha256sum -c - && \
+    mkdir -p /build/aktualizr/build && \
+    cd /build/aktualizr/build && \
+    cmake \
+    -DAKTUALIZR_VERSION=2025.01 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_DEB=ON \
+    -DBUILD_SOTA_TOOLS=ON \
+    -DGARAGE_SIGN_ARCHIVE=/build/aktualizr/uptane-sign/cli-${UPTANE_SIGN_VERSION}.tgz \
+    -DGARAGE_SIGN_TOOL="uptane-sign" \
+    -DSOTA_DEBIAN_PACKAGE_DEPENDS=openjdk-17-jre-headless \
+    -DBUILD_OSTREE=ON \
+    -DBUILD_TESTING=OFF \
+    -DCMAKE_LIBRARY_PATH=$(dpkg-architecture -qDEB_HOST_MULTIARCH) \
+    -DWARNING_AS_ERROR=OFF \
+    .. && \
+    make -j"$(nproc)" && \
+    make package
+
+
 # ── final stage ──────────────────────────────────────────────────────────────
 FROM docker.io/library/debian:bookworm
 
@@ -150,7 +192,15 @@ RUN \
         polkitd \
         net-tools \
         runc \
-        xfsprogs && \
+        xfsprogs \
+        neofetch \
+        xterm \
+        u-boot-tools \
+        libubootenv-tool \
+        openjdk-17-jre-headless \
+        curl \
+        jq \
+        && \
     apt clean -y
 
 # enable what is needed for systemd to work properly in the container
@@ -194,24 +244,34 @@ RUN \
     --mount=type=bind,from=builder,src=/build/bootc-dist,dst=/mnt/bootc-dist \
     cp -a /mnt/bootc-dist/. /
 
-RUN apt update -y && \
-    apt install -y \
-        neofetch \
-        xterm \
-    && \
-    apt clean -y
+# install the package from the aktualizr torizon
+RUN \
+    --mount=type=bind,from=builder,src=/build/aktualizr/build,dst=/mnt/aktualizr-build \
+    apt-get install -y /mnt/aktualizr-build/aktualizr.deb && \
+    apt-get install -y /mnt/aktualizr-build/garage_deploy.deb
 
 # PhobOS customization
 COPY files/systemd/bootc-booted.service /etc/systemd/system/bootc-booted.service
 COPY files/systemd/bootc-u-boot.service /etc/systemd/system/bootc-u-boot.service
 COPY files/systemd/ostree-finalize-staged.service /etc/systemd/system/ostree-finalize-staged.service
 COPY files/systemd/ostree-finalize-staged-hold.service /etc/systemd/system/ostree-finalize-staged-hold.service
+COPY files/systemd/aktualizr-torizon.service /etc/systemd/system/aktualizr-torizon.service
 
 RUN systemctl enable \
     bootc-booted.service \
     bootc-u-boot.service \
     ostree-finalize-staged.service \
-    ostree-finalize-staged-hold.service
+    ostree-finalize-staged-hold.service \
+    aktualizr-torizon.service
+
+# pair script for Torizon.io
+COPY files/aktualizr-config/pair /usr/bin/pair
+COPY files/aktualizr-config/provision-device.sh /usr/bin/provision-device
+COPY files/u-boot/${MACHINE}/fw_env.config /etc/fw_env.config
+
+RUN chmod +x \
+    /usr/bin/pair \
+    /usr/bin/provision-device
 
 # Necessary for general behavior expected by image-based systems
 RUN \
