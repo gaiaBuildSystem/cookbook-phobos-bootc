@@ -137,7 +137,6 @@ sudo podman \
     --rm \
     --privileged \
     --pid=host \
-    -it \
     -v /etc/containers:/etc/containers:Z \
     -v /var/lib/containers:/var/lib/containers:Z \
     -v /var/tmp:/var/tmp:Z \
